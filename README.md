@@ -55,3 +55,4 @@
 ---
 
 ## 3.1.3 Бизнес-процесс
+![Activity Diagram](dLPTQnjN47tVNt6X3x6eZMpN2OdL4knOAcsfRN0U3M4jNKaNIxlBxjecH07PpaV18QQbqD9FGljQs2XH8bkMz1Vk_KSzCxihhsKPIYLOxTwxS-RCp9cv2dQLuzc-tHGxTdctvhjxJkM1st1zyKcfI5yh6BzHjvtAWQ_2K3gYQZS2QMKsxNAezbNuM3on13whrz3u4--vVaNwoVhI8drvVS.png)
