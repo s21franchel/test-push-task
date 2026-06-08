@@ -70,7 +70,7 @@
 ## 3.1.4 Статусная модель
 
 ### State Machine Diagram
-![State Machine](state diagram.png)
+![State Machine](state%20diagram.png)
 
 ### Статусы, инициирующие push-уведомление
 
