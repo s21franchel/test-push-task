@@ -85,6 +85,7 @@
 
 ---
 
+
 ## 3.2 Структура API взаимодействия с внешним сервисом
 
 ### 3.2.1 Общие принципы
@@ -99,10 +100,153 @@
 
 ### 3.2.2 Входящий webhook (внешний сервис → маркетплейс)
 
-**Endpoint:** `POST /v1/webhook/logistics/status`
-
-**Кто вызывает:** Внешний логистический сервис (СДЭК, Boxberry и т.д.)  
-**Кто реализует:** Маркетплейс (API Gateway)  
-**Назначение:** Асинхронное уведомление об изменении логистического статуса заказа
+| Параметр | Значение |
+|---|---|
+| **Endpoint** | `POST /v1/webhook/logistics/status` |
+| **Кто вызывает** | Внешний логистический сервис (СДЭК, Boxberry и т.д.) |
+| **Кто реализует** | Маркетплейс (API Gateway) |
+| **Назначение** | Асинхронное уведомление об изменении логистического статуса заказа |
 
 **Заголовки:**
+
+| Заголовок | Значение |
+|---|---|
+| `Content-Type` | `application/json` |
+| `X-Signature` | `sha256=<base64_hmac>` |
+| `X-Event-Id` | `<uuid>` |
+
+**Тело запроса:**
+
+| Поле | Тип | Обязательность | Описание |
+|---|---|---|---|
+| `event_id` | string (uuid) | Да | Глобальный UUID события. Ключ идемпотентности |
+| `event_type` | string | Да | Тип события: `ORDER_STATUS_CHANGED`, `DELIVERY_EXCEPTION`, `RETURN_INITIATED` |
+| `timestamp` | string (date-time) | Да | Время генерации события во внешней системе |
+| `payload.order_reference.external_order_id` | string | Нет | ID заказа во внешней системе |
+| `payload.order_reference.marketplace_order_id` | string | Да | ID заказа в маркетплейсе |
+| `payload.status_update.previous_status` | string | Нет | Предыдущий статус |
+| `payload.status_update.current_status` | string | Да | Новый статус заказа |
+| `payload.status_update.status_code` | string | Да | Машиночитаемый код статуса |
+| `payload.status_update.reason_code` | string | Нет | Код причины (для отказов/возвратов) |
+| `payload.status_update.changed_at` | string (date-time) | Да | Время фактического изменения статуса |
+| `payload.status_update.estimated_delivery_at` | string (date-time) | Нет | Ожидаемое время доставки |
+| `payload.delivery.tracking_number` | string | Нет | Трек-номер для отслеживания |
+| `payload.delivery.carrier_id` | string | Нет | Идентификатор перевозчика |
+| `payload.delivery.carrier_name` | string | Нет | Наименование перевозчика |
+| `payload.delivery.delivery_type` | string | Нет | Способ доставки: `PICKUP_POINT`, `COURIER`, `POSTOMAT` |
+| `payload.delivery.pickup_point.point_id` | string | Нет | ID пункта выдачи |
+| `payload.delivery.pickup_point.address` | string | Нет | Адрес пункта выдачи |
+
+**Коды ответа:**
+
+| Код | Сценарий |
+|---|---|
+| `200 OK` | Событие принято и обработано (или дубликат — идемпотентный ответ) |
+| `202 Accepted` | Событие принято в очередь, обработка отложена |
+| `400 Bad Request` | Невалидный JSON или не пройдена валидация схемы |
+| `401 Unauthorized` | Невалидная HMAC-подпись |
+| `422 Unprocessable Entity` | Заказ `marketplace_order_id` не найден в системе |
+| `429 Too Many Requests` | Превышен rate limit |
+| `500/502/503` | Внутренняя ошибка — внешний сервис должен ретраить |
+
+**Тело ответа (200):**
+
+| Поле | Тип | Значение |
+|---|---|---|
+| `success` | boolean | `true` |
+| `processed_at` | string (date-time) | Время обработки |
+| `notification.queued` | boolean | `true` |
+| `notification.channels` | array | `["push"]` |
+
+### 3.2.3 Fallback polling (маркетплейс → внешний сервис)
+
+#### 3.2.3.1 Запрос текущего статуса заказа
+
+| Параметр | Значение |
+|---|---|
+| **Endpoint** | `GET /v1/orders/{marketplace_order_id}/status` |
+| **Кто вызывает** | Маркетплейс (Notification Service) |
+| **Кто реализует** | Внешний логистический сервис |
+
+**Заголовки:**
+
+| Заголовок | Значение |
+|---|---|
+| `Authorization` | `Bearer <marketplace_api_token>` |
+| `X-Request-Id` | `<uuid>` |
+
+**Ответ 200:**
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `order_reference.external_order_id` | string | ID заказа во внешней системе |
+| `order_reference.marketplace_order_id` | string | ID заказа в маркетплейсе |
+| `current_status.code` | string | Код текущего статуса |
+| `current_status.name` | string | Наименование статуса |
+| `current_status.changed_at` | string (date-time) | Время изменения |
+| `status_history[].status` | string | Исторический статус |
+| `status_history[].timestamp` | string (date-time) | Время статуса |
+| `tracking.number` | string | Трек-номер |
+| `tracking.url` | string (uri) | URL для отслеживания |
+
+#### 3.2.3.2 Батчевое получение изменений (реконсиляция)
+
+| Параметр | Значение |
+|---|---|
+| **Endpoint** | `GET /v1/orders/status-updates` |
+| **Кто вызывает** | Маркетплейс (Notification Service) |
+| **Кто реализует** | Внешний логистический сервис |
+
+**Параметры запроса:**
+
+| Параметр | Тип | Обязательность | Описание |
+|---|---|---|---|
+| `from` | string (date-time) | Да | Начало временного окна (ISO 8601) |
+| `to` | string (date-time) | Да | Конец временного окна (ISO 8601) |
+| `cursor` | string | Нет | Курсор пагинации (base64) |
+| `limit` | integer | Нет | Максимальное количество записей (1-100, по умолчанию 100) |
+
+**Заголовки:**
+
+| Заголовок | Значение |
+|---|---|
+| `Authorization` | `Bearer <marketplace_api_token>` |
+| `X-Request-Id` | `<uuid>` |
+
+**Ответ 200:**
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `updates[].event_id` | string (uuid) | UUID события |
+| `updates[].marketplace_order_id` | string | ID заказа в маркетплейсе |
+| `updates[].status` | string | Статус |
+| `updates[].timestamp` | string (date-time) | Время изменения |
+| `pagination.cursor` | string | Курсор для следующей страницы |
+| `pagination.has_more` | boolean | Есть ли ещё данные |
+
+### 3.2.4 Назначение ключевых полей контракта
+
+| Поле | Назначение | Кто генерирует |
+|---|---|---|
+| `event_id` | Глобальный UUID события. Ключ идемпотентности | Внешний сервис |
+| `marketplace_order_id` | Единственный обязательный идентификатор заказа в системе маркетплейса | Маркетплейс (при создании заказа) |
+| `current_status` / `status_code` | Машиночитаемый код статуса из статусной модели | Внешний сервис |
+| `previous_status` | Позволяет построить валидацию переходов и понять направление изменения | Внешний сервис |
+| `changed_at` | Время фактического изменения статуса во внешней системе | Внешний сервис |
+| `delivery.tracking_number` | Трек-номер для отображения в приложении | Внешний сервис |
+| `delivery.delivery_type` | `PICKUP_POINT`, `COURIER`, `POSTOMAT` — влияет на текст уведомления | Внешний сервис |
+| `X-Signature` | HMAC-SHA256 тела запроса для проверки подлинности источника | Внешний сервис |
+
+---
+
+
+## 4. Итоговый чеклист
+
+- [x] Получение статусов из внешнего логистического сервиса (webhook + fallback polling)
+- [x] Идемпотентная обработка событий по `event_id`
+- [x] Учёт пользовательских настроек уведомлений
+- [x] Локализованные push с deeplink
+- [x] Экспоненциальный backoff при ошибках
+- [x] Аудит-лог всех отправок
+- [x] Защита интеграции (HMAC)
+- [x] Горизонтальное масштабирование
