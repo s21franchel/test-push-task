@@ -70,10 +70,7 @@
 ## 3.1.4 Статусная модель
 
 ### State Machine Diagram
-
-> [ВСТАВЬ СКРИНШОТ: переименуй картинку в `state-machine.png` и положи рядом с README.md]
-
-![State Machine](state-machine.png)
+![State Machine](state diagram.png)
 
 ### Статусы, инициирующие push-уведомление
 
